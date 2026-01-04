@@ -288,13 +288,12 @@ extension ColorInfo {
 
     /// Converts FourCharCode to String for CodecRegistry lookup.
     private static func fourCCToString(_ fourCC: FourCharCode) -> String {
-        let bytes: [CChar] = [
-            CChar((fourCC >> 24) & 0xff),
-            CChar((fourCC >> 16) & 0xff),
-            CChar((fourCC >> 8) & 0xff),
-            CChar(fourCC & 0xff),
-            0
+        let bytes: [UInt8] = [
+            UInt8((fourCC >> 24) & 0xff),
+            UInt8((fourCC >> 16) & 0xff),
+            UInt8((fourCC >> 8) & 0xff),
+            UInt8(fourCC & 0xff)
         ]
-        return String(cString: bytes)
+        return String(decoding: bytes, as: UTF8.self)
     }
 }

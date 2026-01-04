@@ -264,14 +264,13 @@ public struct AudioTrackDescriptor: Codable, Sendable, Hashable, Identifiable {
 extension FourCharCode {
     /// Converts FourCharCode to a String.
     var asString: String {
-        let bytes: [CChar] = [
-            CChar((self >> 24) & 0xff),
-            CChar((self >> 16) & 0xff),
-            CChar((self >> 8) & 0xff),
-            CChar(self & 0xff),
-            0
+        let bytes: [UInt8] = [
+            UInt8((self >> 24) & 0xff),
+            UInt8((self >> 16) & 0xff),
+            UInt8((self >> 8) & 0xff),
+            UInt8(self & 0xff)
         ]
-        return String(cString: bytes)
+        return String(decoding: bytes, as: UTF8.self)
     }
 }
 
