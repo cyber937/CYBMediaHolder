@@ -129,3 +129,6 @@ CYBMediaHolder intentionally knows nothing about:
 ## License
 
 MIT License
+
+## A reference application built on this core:
+CYBMediaPlayer (macOS)
