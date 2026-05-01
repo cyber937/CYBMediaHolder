@@ -98,6 +98,7 @@ public struct TimecodeExtractionResult: Sendable, Equatable {
 /// - QuickTime (.mov)
 /// - MPEG-4 (.mp4, .m4v, .m4a)
 /// - MPEG-2 TS (.ts)
+/// - MXF (.mxf) — Sony XAVC and other professional formats; codec support depends on the OS
 /// - Common audio formats (.aac, .mp3, .wav, .aiff)
 ///
 /// ## Limitations
@@ -115,7 +116,9 @@ public struct AVFoundationMediaProbe: MediaProbe, Sendable {
         // Audio
         "m4a", "aac", "mp3", "wav", "aiff", "aif", "caf",
         // Transport stream
-        "ts", "mts", "m2ts"
+        "ts", "mts", "m2ts",
+        // Professional containers (codec support depends on the OS)
+        "mxf"
     ]
 
     public let supportedUTTypes: Set<String> = [
@@ -123,7 +126,8 @@ public struct AVFoundationMediaProbe: MediaProbe, Sendable {
         "public.audio",
         "com.apple.quicktime-movie",
         "public.mpeg-4",
-        "public.mpeg-4-audio"
+        "public.mpeg-4-audio",
+        "org.smpte.mxf-generic"
     ]
 
     public init() {}
@@ -458,6 +462,9 @@ public struct AVFoundationMediaProbe: MediaProbe, Sendable {
         case "ts", "mts", "m2ts":
             format = "MPEG-2 Transport Stream"
             supportsStreaming = true
+        case "mxf":
+            format = "MXF"
+            supportsStreaming = false
         case "wav":
             format = "WAVE"
             supportsStreaming = false

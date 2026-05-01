@@ -214,6 +214,16 @@ final class MediaFileValidatorTests: XCTestCase {
         XCTAssertTrue(signature.isAudio)
     }
 
+    func testDetectMXFSignature() throws {
+        let mxfFile = tempDirectory.appendingPathComponent("test.mxf")
+        try createMXFHeader().write(to: mxfFile)
+
+        let signature = try validator.detectSignature(url: mxfFile)
+        XCTAssertEqual(signature, .mxf)
+        XCTAssertTrue(signature.isVideo)
+        XCTAssertEqual(signature.displayName, "MXF")
+    }
+
     func testDetectUnknownSignature() throws {
         let unknownFile = tempDirectory.appendingPathComponent("test.xyz")
         try Data([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B]).write(to: unknownFile)
@@ -300,5 +310,14 @@ final class MediaFileValidatorTests: XCTestCase {
         data.append(contentsOf: [0x24, 0x00, 0x00, 0x00]) // file size
         data.append(contentsOf: Array("WAVE".utf8))
         return data
+    }
+
+    private func createMXFHeader() -> Data {
+        // SMPTE 377M header pack key (16 bytes) + length placeholder
+        // 06 0E 2B 34 02 05 01 01  0D 01 02 01 01 02 01 00 (header partition pack)
+        return Data([
+            0x06, 0x0E, 0x2B, 0x34, 0x02, 0x05, 0x01, 0x01,
+            0x0D, 0x01, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00
+        ])
     }
 }

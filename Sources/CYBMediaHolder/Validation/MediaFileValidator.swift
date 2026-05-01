@@ -115,6 +115,7 @@ public enum MediaFileSignature: Sendable {
     case avi       // RIFF....AVI
     case mkv       // 0x1A45DFA3 (EBML header)
     case webm      // Same as MKV (WebM is MKV subset)
+    case mxf       // SMPTE MXF: 06 0E 2B 34 02 05 01 01 0D 01 02 (KLV header pack key)
 
     // Audio signatures
     case mp3       // ID3 or 0xFF 0xFB
@@ -200,6 +201,14 @@ public enum MediaFileSignature: Sendable {
             return .mkv
         }
 
+        // MXF: SMPTE 377M KLV header pack key (06 0E 2B 34 02 05 01 01 0D 01 02)
+        if bytes.count >= 11 &&
+           bytes[0] == 0x06 && bytes[1] == 0x0E && bytes[2] == 0x2B && bytes[3] == 0x34 &&
+           bytes[4] == 0x02 && bytes[5] == 0x05 && bytes[6] == 0x01 && bytes[7] == 0x01 &&
+           bytes[8] == 0x0D && bytes[9] == 0x01 && bytes[10] == 0x02 {
+            return .mxf
+        }
+
         // RIFF-based formats (AVI, WAV, WEBP)
         if bytes.count >= 12 {
             let riffHeader = String(bytes: bytes[0..<4], encoding: .ascii)
@@ -277,6 +286,7 @@ public enum MediaFileSignature: Sendable {
         case .avi: return "AVI"
         case .mkv: return "Matroska"
         case .webm: return "WebM"
+        case .mxf: return "MXF"
         case .mp3: return "MP3"
         case .wav: return "WAV"
         case .aiff: return "AIFF"
@@ -297,7 +307,7 @@ public enum MediaFileSignature: Sendable {
     /// Whether this is a video format.
     public var isVideo: Bool {
         switch self {
-        case .mp4, .mov, .avi, .mkv, .webm:
+        case .mp4, .mov, .avi, .mkv, .webm, .mxf:
             return true
         default:
             return false
@@ -522,7 +532,7 @@ public struct MediaFileValidator: Sendable {
     }
 
     private func extensionCategory(_ ext: String) -> MediaCategory {
-        let videoExtensions = Set(["mp4", "mov", "m4v", "avi", "mkv", "webm", "wmv", "flv", "3gp"])
+        let videoExtensions = Set(["mp4", "mov", "m4v", "avi", "mkv", "webm", "wmv", "flv", "3gp", "mxf"])
         let audioExtensions = Set(["mp3", "wav", "aiff", "aif", "flac", "aac", "m4a", "ogg", "wma"])
         let imageExtensions = Set(["jpg", "jpeg", "png", "gif", "tiff", "tif", "heic", "heif", "webp", "bmp", "ico"])
 
