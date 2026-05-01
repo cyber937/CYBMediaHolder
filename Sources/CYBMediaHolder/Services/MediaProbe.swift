@@ -54,6 +54,21 @@ public enum MediaProbeError: Error, Sendable, CustomStringConvertible {
             return "Probe failed: \(error.localizedDescription)"
         }
     }
+
+    /// Whether trying a different probe might succeed for this error.
+    ///
+    /// Codec / container / format / playability issues are recoverable — another
+    /// probe (e.g. FFmpeg fallback after AVFoundation) might handle the file.
+    /// File-system errors (missing file, sandbox denial) are absolute and should
+    /// not trigger a fallback.
+    public var isCodecOrFormatFailure: Bool {
+        switch self {
+        case .unsupportedFormat, .notPlayable, .propertyLoadFailed, .noTracksFound, .probeFailed:
+            return true
+        case .fileNotFound, .locatorResolutionFailed, .accessDenied:
+            return false
+        }
+    }
 }
 
 /// Protocol for probing media files to extract descriptors.
@@ -146,6 +161,11 @@ public actor MediaProbeRegistry {
         defaultProbe = avProbe
     }
 
+    /// Internal initializer for tests — produces a fresh, empty registry.
+    internal init(empty: Void) {
+        // Empty — tests register their own probes.
+    }
+
     /// Registers a probe.
     public func register(_ probe: MediaProbe) {
         probes.append(probe)
@@ -174,13 +194,43 @@ public actor MediaProbeRegistry {
         probes
     }
 
-    /// Probes a locator using the best available probe.
+    /// Probes a locator using the best available probe, with fallback.
+    ///
+    /// Tries every registered probe whose `canHandle(locator:)` returns true,
+    /// in registration order. If a probe throws a recoverable error
+    /// (`MediaProbeError.isCodecOrFormatFailure == true`), the next candidate
+    /// is tried. Non-recoverable errors (file-system / sandbox) propagate
+    /// immediately. If no probe matches, falls back to `defaultProbe`.
+    ///
+    /// This enables patterns like "AVFoundation first, FFmpeg fallback for
+    /// MXF / professional codecs": both probes claim `.mxf`, AVFoundation
+    /// is tried first (fast, native), and FFmpeg picks up the slack when
+    /// `AVAsset.load(...)` fails on unsupported codecs.
     ///
     /// - Parameter locator: The media locator.
-    /// - Returns: A MediaDescriptor.
-    /// - Throws: If no probe can handle the locator or probing fails.
+    /// - Returns: A MediaDescriptor produced by the first successful probe.
+    /// - Throws: The last recoverable error if every candidate fails, or any
+    ///   non-recoverable error encountered along the way.
     public func probe(locator: MediaLocator) async throws -> MediaDescriptor {
-        let selectedProbe = probe(for: locator)
-        return try await selectedProbe.probe(locator: locator)
+        let candidates = probes.filter { $0.canHandle(locator: locator) }
+
+        if candidates.isEmpty {
+            guard let fallback = defaultProbe else {
+                throw MediaProbeError.unsupportedFormat("No registered probe matched and no default probe is set")
+            }
+            return try await fallback.probe(locator: locator)
+        }
+
+        var lastRecoverableError: MediaProbeError?
+        for candidate in candidates {
+            do {
+                return try await candidate.probe(locator: locator)
+            } catch let error as MediaProbeError where error.isCodecOrFormatFailure {
+                lastRecoverableError = error
+                continue
+            }
+        }
+
+        throw lastRecoverableError ?? MediaProbeError.unsupportedFormat("All registered probes rejected the file")
     }
 }
