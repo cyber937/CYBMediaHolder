@@ -242,9 +242,14 @@ public final class MediaHolder: @unchecked Sendable {
             )
         }
 
-        // For video/audio, use extended probe (includes timecode)
+        // For video/audio, use extended probe (includes timecode); on
+        // codec / container failure, fall back to MediaProbeRegistry.shared
+        // so registered alternates (e.g. FFmpegMediaProbe) get a turn.
         let avProbe = selectedProbe as? AVFoundationMediaProbe ?? AVFoundationMediaProbe()
-        let extendedResult = try await avProbe.probeExtended(locator: locator)
+        let probed = try await Self.probeWithFallback(
+            locator: locator,
+            avProbe: avProbe
+        )
 
         // Create ID
         let id = MediaID()
@@ -253,8 +258,8 @@ public final class MediaHolder: @unchecked Sendable {
         return MediaHolder(
             id: id,
             locator: locator,
-            descriptor: extendedResult.descriptor,
-            timecode: extendedResult.timecode,
+            descriptor: probed.descriptor,
+            timecode: probed.timecode,
             displayName: url.lastPathComponent
         )
     }
@@ -307,16 +312,21 @@ public final class MediaHolder: @unchecked Sendable {
             )
         }
 
-        // For video/audio, use extended probe (includes timecode)
+        // For video/audio, use extended probe (includes timecode); on
+        // codec / container failure, fall back to MediaProbeRegistry.shared
+        // so registered alternates (e.g. FFmpegMediaProbe) get a turn.
         let avProbe = selectedProbe as? AVFoundationMediaProbe ?? AVFoundationMediaProbe()
-        let extendedResult = try await avProbe.probeExtended(locator: locator)
+        let probed = try await Self.probeWithFallback(
+            locator: locator,
+            avProbe: avProbe
+        )
 
         // Create holder with timecode
         return MediaHolder(
             id: id,
             locator: locator,
-            descriptor: extendedResult.descriptor,
-            timecode: extendedResult.timecode,
+            descriptor: probed.descriptor,
+            timecode: probed.timecode,
             displayName: url.lastPathComponent
         )
     }
@@ -348,24 +358,51 @@ public final class MediaHolder: @unchecked Sendable {
         using probe: MediaProbe = AVFoundationMediaProbe(),
         displayName: String? = nil
     ) async throws -> MediaHolder {
-        // Probe the media with extended result (includes timecode)
+        // Probe with extended result (timecode); on codec / container failure
+        // fall back to MediaProbeRegistry.shared (FFmpeg etc.).
         let avProbe = probe as? AVFoundationMediaProbe ?? AVFoundationMediaProbe()
-        let extendedResult = try await avProbe.probeExtended(locator: locator)
+        let probed = try await Self.probeWithFallback(locator: locator, avProbe: avProbe)
 
         // Create ID
         let id = MediaID()
 
         // Derive display name from locator if not provided
-        let name = displayName ?? deriveDisplayName(from: locator, descriptor: extendedResult.descriptor)
+        let name = displayName ?? deriveDisplayName(from: locator, descriptor: probed.descriptor)
 
         // Create holder with timecode
         return MediaHolder(
             id: id,
             locator: locator,
-            descriptor: extendedResult.descriptor,
-            timecode: extendedResult.timecode,
+            descriptor: probed.descriptor,
+            timecode: probed.timecode,
             displayName: name
         )
+    }
+
+    /// Probe with AVFoundation first; on codec / container failure (recoverable
+    /// errors per `MediaProbeError.isCodecOrFormatFailure`) fall back to
+    /// `MediaProbeRegistry.shared`, which iterates registered alternates such
+    /// as `FFmpegMediaProbe`. AVFoundation-native files keep extended-probe
+    /// timecode metadata; fallback paths get inferred timecode based on the
+    /// primary video track's frame rate.
+    private static func probeWithFallback(
+        locator: MediaLocator,
+        avProbe: AVFoundationMediaProbe
+    ) async throws -> (descriptor: MediaDescriptor, timecode: TimecodeExtractionResult?) {
+        do {
+            let result = try await avProbe.probeExtended(locator: locator)
+            return (result.descriptor, result.timecode)
+        } catch let error as MediaProbeError where error.isCodecOrFormatFailure {
+            let descriptor = try await MediaProbeRegistry.shared.probe(locator: locator)
+            // Skip inferred-timecode synthesis if AVFoundation actually
+            // succeeded inside the registry — otherwise the registry's result
+            // already came from AVFoundation and its descriptor lacks the
+            // extended timecode that probeExtended would have produced. Either
+            // way, return the descriptor with an inferred timecode based on
+            // the primary video track's frame rate.
+            let frameRate = descriptor.primaryVideoTrack.map { Double($0.nominalFrameRate) } ?? 30.0
+            return (descriptor, TimecodeExtractionResult.inferred(frameRate: frameRate))
+        }
     }
 
     /// Derives a display name from a locator.
