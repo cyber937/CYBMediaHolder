@@ -393,15 +393,11 @@ public final class MediaHolder: @unchecked Sendable {
             let result = try await avProbe.probeExtended(locator: locator)
             return (result.descriptor, result.timecode)
         } catch let error as MediaProbeError where error.isCodecOrFormatFailure {
-            let descriptor = try await MediaProbeRegistry.shared.probe(locator: locator)
-            // Skip inferred-timecode synthesis if AVFoundation actually
-            // succeeded inside the registry — otherwise the registry's result
-            // already came from AVFoundation and its descriptor lacks the
-            // extended timecode that probeExtended would have produced. Either
-            // way, return the descriptor with an inferred timecode based on
-            // the primary video track's frame rate.
-            let frameRate = descriptor.primaryVideoTrack.map { Double($0.nominalFrameRate) } ?? 30.0
-            return (descriptor, TimecodeExtractionResult.inferred(frameRate: frameRate))
+            // Use the registry's `probeExtended` so fallback paths (e.g.
+            // FFmpegMediaProbe for MXF) can surface embedded source
+            // timecode rather than falling back to `inferred(...)`.
+            let result = try await MediaProbeRegistry.shared.probeExtended(locator: locator)
+            return (result.descriptor, result.timecode)
         }
     }
 

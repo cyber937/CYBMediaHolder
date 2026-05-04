@@ -243,19 +243,37 @@ public actor MediaProbeRegistry {
     /// - Throws: The last recoverable error if every candidate fails, or any
     ///   non-recoverable error encountered along the way.
     public func probe(locator: MediaLocator) async throws -> MediaDescriptor {
+        try await probeExtended(locator: locator).descriptor
+    }
+
+    /// Same fallback chain as `probe(locator:)`, but returns the full
+    /// `ExtendedProbeResult` so callers can pick up embedded SMPTE source
+    /// timecode that probes like `FFmpegMediaProbe` (MXF MaterialPackage)
+    /// or `AVFoundationMediaProbe` (`tmcd` track) extract.
+    ///
+    /// Without this, fallback paths through the registry would discard
+    /// TC — `probe(locator:)` only returns the descriptor, forcing
+    /// downstream code to fall back to `inferred(...)` even when a
+    /// fallback probe knows the real source TC.
+    ///
+    /// - Parameter locator: The media locator.
+    /// - Returns: An `ExtendedProbeResult` from the first successful probe.
+    /// - Throws: The last recoverable error if every candidate fails, or
+    ///   any non-recoverable error encountered along the way.
+    public func probeExtended(locator: MediaLocator) async throws -> ExtendedProbeResult {
         let candidates = probes.filter { $0.canHandle(locator: locator) }
 
         if candidates.isEmpty {
             guard let fallback = defaultProbe else {
                 throw MediaProbeError.unsupportedFormat("No registered probe matched and no default probe is set")
             }
-            return try await fallback.probe(locator: locator)
+            return try await fallback.probeExtended(locator: locator)
         }
 
         var lastRecoverableError: MediaProbeError?
         for candidate in candidates {
             do {
-                return try await candidate.probe(locator: locator)
+                return try await candidate.probeExtended(locator: locator)
             } catch let error as MediaProbeError where error.isCodecOrFormatFailure {
                 lastRecoverableError = error
                 continue
