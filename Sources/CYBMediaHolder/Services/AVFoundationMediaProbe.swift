@@ -68,6 +68,24 @@ public struct TimecodeExtractionResult: Sendable, Equatable {
     /// - 0.3: inferred (best-effort estimate)
     public let confidence: Double
 
+    /// Memberwise initializer for cross-module construction (e.g., from
+    /// `CYBFFmpegDecoder` mapping `FFmpegTimecode → TimecodeExtractionResult`).
+    public init(
+        start: String,
+        rate: Double,
+        dropFrame: Bool,
+        sourceKind: String,
+        source: String,
+        confidence: Double
+    ) {
+        self.start = start
+        self.rate = rate
+        self.dropFrame = dropFrame
+        self.sourceKind = sourceKind
+        self.source = source
+        self.confidence = confidence
+    }
+
     /// Creates an inferred (default) timecode result.
     ///
     /// Used when no explicit timecode is found in the media.

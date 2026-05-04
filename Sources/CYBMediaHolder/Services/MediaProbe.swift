@@ -106,6 +106,22 @@ public protocol MediaProbe: Sendable {
     /// - Throws: `MediaProbeError` if probing fails.
     func probe(locator: MediaLocator) async throws -> MediaDescriptor
 
+    /// Probes a media locator and returns the descriptor *plus* extracted
+    /// timecode metadata.
+    ///
+    /// Probe implementations that natively read embedded SMPTE source
+    /// timecode (AVFoundation `tmcd` track, FFmpeg-MXF MaterialPackage,
+    /// container-level `timecode` metadata, etc.) should override this and
+    /// surface the canonical TC. Probes that do not have access to embedded
+    /// TC can rely on the protocol default, which calls `probe(locator:)`
+    /// and pairs the descriptor with `TimecodeExtractionResult.inferred(...)`.
+    ///
+    /// - Parameter locator: The media locator to probe.
+    /// - Returns: An `ExtendedProbeResult` containing both the descriptor
+    ///   and a timecode result (which may be `inferred`).
+    /// - Throws: `MediaProbeError` if probing fails.
+    func probeExtended(locator: MediaLocator) async throws -> ExtendedProbeResult
+
     /// Checks if this probe can handle the given locator.
     ///
     /// - Parameter locator: The media locator to check.
@@ -126,6 +142,21 @@ extension MediaProbe {
 
         let ext = (path as NSString).pathExtension.lowercased()
         return supportedExtensions.contains(ext)
+    }
+
+    /// Default `probeExtended` implementation — calls `probe(locator:)` and
+    /// pairs the descriptor with an `inferred` timecode at the primary video
+    /// track's nominal frame rate (or 30 fps fallback when there is no
+    /// video).
+    ///
+    /// Probes capable of reading embedded source TC should override this.
+    public func probeExtended(locator: MediaLocator) async throws -> ExtendedProbeResult {
+        let descriptor = try await probe(locator: locator)
+        let frameRate = descriptor.videoTracks.first.map { Double($0.nominalFrameRate) } ?? 30.0
+        return ExtendedProbeResult(
+            descriptor: descriptor,
+            timecode: .inferred(frameRate: frameRate)
+        )
     }
 }
 
