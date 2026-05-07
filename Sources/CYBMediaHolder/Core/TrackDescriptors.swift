@@ -104,6 +104,28 @@ public struct VideoTrackDescriptor: Codable, Sendable, Identifiable {
     /// Average bitrate in bits per second (if available).
     public let averageBitRate: Float?
 
+    /// Codable-friendly storage for the track's preferred display transform.
+    /// `CGAffineTransform` itself is not `Codable`, so we serialize it as a
+    /// flat `[a, b, c, d, tx, ty]` array. Optional so descriptors encoded
+    /// before this field existed still decode (computed `preferredTransform`
+    /// returns `.identity` in that case). Read/write via `preferredTransform`.
+    private let preferredTransformValues: [CGFloat]?
+
+    /// The track's preferred display transform.
+    ///
+    /// AVFoundation stores recorded orientation here — e.g. iPhone vertically
+    /// shot footage has a 90° rotation in `preferredTransform` while the
+    /// pixel data itself is laid out landscape. Renderers that don't apply
+    /// `AVMutableVideoComposition` (e.g. the SBDL pipeline) need this value
+    /// to display vertical content the right way up.
+    ///
+    /// Defaults to `.identity` (no rotation/flip) for sources that don't
+    /// expose orientation metadata or for backward-compatibility decodes.
+    public var preferredTransform: CGAffineTransform {
+        guard let v = preferredTransformValues, v.count == 6 else { return .identity }
+        return CGAffineTransform(a: v[0], b: v[1], c: v[2], d: v[3], tx: v[4], ty: v[5])
+    }
+
     /// Creates a video track descriptor with all properties.
     public init(
         id: Int,
@@ -117,7 +139,8 @@ public struct VideoTrackDescriptor: Codable, Sendable, Identifiable {
         colorInfo: ColorInfo,
         timeRange: CMTimeRange,
         timescale: CMTimeScale,
-        averageBitRate: Float? = nil
+        averageBitRate: Float? = nil,
+        preferredTransform: CGAffineTransform = .identity
     ) {
         self.id = id
         self.trackIndex = trackIndex
@@ -131,6 +154,11 @@ public struct VideoTrackDescriptor: Codable, Sendable, Identifiable {
         self.timeRange = timeRange
         self.timescale = timescale
         self.averageBitRate = averageBitRate
+        self.preferredTransformValues = [
+            preferredTransform.a, preferredTransform.b,
+            preferredTransform.c, preferredTransform.d,
+            preferredTransform.tx, preferredTransform.ty,
+        ]
     }
 
     /// Calculated total frame count (approximate for VFR).
@@ -159,6 +187,9 @@ extension VideoTrackDescriptor: Hashable {
         hasher.combine(colorInfo)
         hasher.combine(timescale)
         hasher.combine(averageBitRate)
+        let t = preferredTransform
+        hasher.combine(t.a); hasher.combine(t.b); hasher.combine(t.c)
+        hasher.combine(t.d); hasher.combine(t.tx); hasher.combine(t.ty)
     }
 
     public static func == (lhs: VideoTrackDescriptor, rhs: VideoTrackDescriptor) -> Bool {
@@ -172,7 +203,8 @@ extension VideoTrackDescriptor: Hashable {
         lhs.isVFR == rhs.isVFR &&
         lhs.colorInfo == rhs.colorInfo &&
         lhs.timescale == rhs.timescale &&
-        lhs.averageBitRate == rhs.averageBitRate
+        lhs.averageBitRate == rhs.averageBitRate &&
+        lhs.preferredTransform == rhs.preferredTransform
     }
 }
 
