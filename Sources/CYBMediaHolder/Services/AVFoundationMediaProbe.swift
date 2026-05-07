@@ -310,13 +310,15 @@ public struct AVFoundationMediaProbe: MediaProbe, Sendable {
             minFrameDuration,
             naturalSize,
             timeRange,
-            formatDescriptions
+            formatDescriptions,
+            preferredTransform
         ) = try await track.load(
             .nominalFrameRate,
             .minFrameDuration,
             .naturalSize,
             .timeRange,
-            .formatDescriptions
+            .formatDescriptions,
+            .preferredTransform
         )
 
         // Extract codec info
@@ -351,7 +353,8 @@ public struct AVFoundationMediaProbe: MediaProbe, Sendable {
             colorInfo: colorInfo,
             timeRange: timeRange,
             timescale: minFrameDuration.timescale,
-            averageBitRate: nil
+            averageBitRate: nil,
+            preferredTransform: preferredTransform
         )
     }
 
