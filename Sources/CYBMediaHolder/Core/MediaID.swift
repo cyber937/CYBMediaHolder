@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import CryptoKit
 
 /// A stable, unique identifier for a media item.
 ///
@@ -77,4 +78,77 @@ extension MediaID: CustomStringConvertible {
 
 extension MediaID: Identifiable {
     public var id: UUID { uuid }
+}
+
+// MARK: - Equality
+
+extension MediaID {
+
+    /// Identity is the `uuid` alone.
+    ///
+    /// When a holder is created from a local file the `uuid` is derived from the
+    /// file's content (see ``contentStableIdentity(forFileAt:)``), so two holders
+    /// for the same file compare equal and hash equally. `contentHash` and
+    /// `bookmarkHash` are informational metadata and do not affect identity.
+    public static func == (lhs: MediaID, rhs: MediaID) -> Bool {
+        lhs.uuid == rhs.uuid
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(uuid)
+    }
+}
+
+// MARK: - Content-stable Identity
+
+extension MediaID {
+
+    /// Derives a content-stable identity for a local file.
+    ///
+    /// The returned `uuid` is computed from a fingerprint of the file (its size
+    /// plus up to 64 KiB each of the head and tail), so the same file yields the
+    /// same identity across launches and after moves/copies. `contentHash` is the
+    /// full SHA-256 hex digest of that fingerprint.
+    ///
+    /// - Parameter url: A local file URL.
+    /// - Returns: The derived identity, or `nil` for non-file URLs / unreadable files.
+    public static func contentStableIdentity(forFileAt url: URL) -> (uuid: UUID, contentHash: String)? {
+        guard let fingerprint = fileFingerprint(url) else { return nil }
+        let digest = SHA256.hash(data: fingerprint)
+        let bytes = Array(digest)               // 32 bytes
+        let u = Array(bytes.prefix(16))
+        let uuid = UUID(uuid: (u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7],
+                               u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]))
+        let hex = bytes.map { String(format: "%02x", $0) }.joined()
+        return (uuid, hex)
+    }
+
+    /// Builds a fingerprint from the file size and up to 64 KiB each of the head
+    /// and tail. Deliberately content-based (no mtime) so identity survives
+    /// copies and restores.
+    private static func fileFingerprint(_ url: URL) -> Data? {
+        guard url.isFileURL else { return nil }
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = (attrs[.size] as? NSNumber)?.uint64Value else { return nil }
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+
+        var data = Data()
+        var sizeLE = size.littleEndian
+        withUnsafeBytes(of: &sizeLE) { data.append(contentsOf: $0) }
+
+        let chunk = 64 * 1024
+        let head = (try? handle.read(upToCount: chunk)) ?? Data()
+        data.append(head)
+
+        // Include the tail too when the file is large enough that head + tail
+        // don't overlap, to lower the collision risk for media that share a
+        // common header.
+        if size > UInt64(2 * chunk) {
+            try? handle.seek(toOffset: size - UInt64(chunk))
+            let tail = (try? handle.read(upToCount: chunk)) ?? Data()
+            data.append(tail)
+        }
+        return data
+    }
 }

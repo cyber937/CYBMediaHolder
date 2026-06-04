@@ -195,6 +195,18 @@ public final class MediaHolder: @unchecked Sendable {
         return imageExtensions.contains(ext)
     }
 
+    /// Builds a content-stable `MediaID` for a local file.
+    ///
+    /// Falls back to a random UUID when the file can't be fingerprinted (e.g.
+    /// remote sources or unreadable files), preserving previous behavior for
+    /// those cases.
+    private static func makeStableID(forFileAt url: URL, bookmarkHash: String? = nil) -> MediaID {
+        if let identity = MediaID.contentStableIdentity(forFileAt: url) {
+            return MediaID(uuid: identity.uuid, contentHash: identity.contentHash, bookmarkHash: bookmarkHash)
+        }
+        return MediaID(bookmarkHash: bookmarkHash)
+    }
+
     /// Creates a MediaHolder from a URL using the appropriate probe.
     ///
     /// Automatically selects ImageMediaProbe for image files and
@@ -227,11 +239,11 @@ public final class MediaHolder: @unchecked Sendable {
         let selectedProbe = probe ?? (isImageFile(url) ? ImageMediaProbe() : AVFoundationMediaProbe())
 
         // For images, use simple probe (no timecode)
+        // Content-stable identity derived from the file (same file -> same ID).
+        let id = makeStableID(forFileAt: url)
+
         if let imageProbe = selectedProbe as? ImageMediaProbe {
             let descriptor = try await imageProbe.probe(locator: locator)
-
-            // Create ID
-            let id = MediaID()
 
             return MediaHolder(
                 id: id,
@@ -250,9 +262,6 @@ public final class MediaHolder: @unchecked Sendable {
             locator: locator,
             avProbe: avProbe
         )
-
-        // Create ID
-        let id = MediaID()
 
         // Create holder with timecode
         return MediaHolder(
@@ -294,7 +303,8 @@ public final class MediaHolder: @unchecked Sendable {
             relativeTo: nil
         )
         let bookmarkHash = bookmarkData.base64EncodedString().prefix(16)
-        let id = MediaID(bookmarkHash: String(bookmarkHash))
+        // Content-stable identity; retains the bookmark hash as metadata.
+        let id = makeStableID(forFileAt: url, bookmarkHash: String(bookmarkHash))
 
         // Select appropriate probe based on file type
         let selectedProbe = probe ?? (isImageFile(url) ? ImageMediaProbe() : AVFoundationMediaProbe())
@@ -363,8 +373,18 @@ public final class MediaHolder: @unchecked Sendable {
         let avProbe = probe as? AVFoundationMediaProbe ?? AVFoundationMediaProbe()
         let probed = try await Self.probeWithFallback(locator: locator, avProbe: avProbe)
 
-        // Create ID
-        let id = MediaID()
+        // Content-stable identity when the locator points at a local file;
+        // falls back to a random UUID for remote/opaque locators.
+        let id: MediaID
+        if let path = locator.filePath {
+            id = makeStableID(forFileAt: URL(fileURLWithPath: path))
+        } else if case .securityScopedBookmark = locator,
+                  let resolved = try? await locator.resolve() {
+            id = makeStableID(forFileAt: resolved.url)
+            resolved.stopAccessing()
+        } else {
+            id = MediaID()
+        }
 
         // Derive display name from locator if not provided
         let name = displayName ?? deriveDisplayName(from: locator, descriptor: probed.descriptor)

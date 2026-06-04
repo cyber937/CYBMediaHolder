@@ -341,12 +341,18 @@ public struct AVFoundationMediaProbe: MediaProbe, Sendable {
         // Estimate if VFR
         let isVFR = await estimateVFR(track: track, nominalFrameRate: nominalFrameRate)
 
+        // Guard against degenerate sizes (e.g. a height of 0) which would
+        // otherwise store NaN/inf into the descriptor and poison Hashable.
+        let displayAspectRatio: CGFloat? = naturalSize.height > 0
+            ? naturalSize.width / naturalSize.height
+            : nil
+
         return VideoTrackDescriptor(
             id: index,
             trackIndex: index,
             codec: codec,
             size: naturalSize,
-            displayAspectRatio: naturalSize.width / naturalSize.height,
+            displayAspectRatio: displayAspectRatio,
             nominalFrameRate: nominalFrameRate,
             minFrameDuration: minFrameDuration,
             isVFR: isVFR,
@@ -603,33 +609,30 @@ public struct AVFoundationMediaProbe: MediaProbe, Sendable {
                 return nil
             }
 
-            // Get timecode flags and frame rate from format description
+            // Frame duration, quanta, and flags come from the dedicated
+            // CMTimeCodeFormatDescription accessors. The extensions dictionary
+            // has no "FrameDuration"/"TimeCodeFlags" keys, so the previous
+            // lookups always failed (rate stuck at 30, drop-frame never set).
             var frameRate: Double = 30.0
-            var dropFrame = false
 
-            // Extract frame duration to calculate frame rate
-            if let extensions = CMFormatDescriptionGetExtensions(formatDesc) as? [String: Any] {
-                // Try to get frame duration using the raw key string
-                // The key is "FrameDuration" in the extensions dictionary
-                if let frameDuration = extensions["FrameDuration"] as? [String: Any],
-                   let value = frameDuration["value"] as? Int64,
-                   let timescale = frameDuration["timescale"] as? Int32,
-                   timescale > 0 && value > 0 {
-                    frameRate = Double(timescale) / Double(value)
-                }
-
-                // Check for drop frame flag in timecode flags
-                if let tcFlags = extensions["TimeCodeFlags"] as? UInt32 {
-                    // kCMTimeCodeFlag_DropFrame = 1 << 0
-                    dropFrame = (tcFlags & 0x01) != 0
-                }
+            let frameDuration = CMTimeCodeFormatDescriptionGetFrameDuration(formatDesc)
+            if frameDuration.isValid && frameDuration.value > 0 {
+                frameRate = Double(frameDuration.timescale) / Double(frameDuration.value)
             }
+
+            // Frames-per-second base used for HH:MM:SS:FF roll-over
+            // (30 for 29.97 drop-frame, 24 for 23.976, etc.).
+            let frameQuanta = CMTimeCodeFormatDescriptionGetFrameQuanta(formatDesc)
+
+            let tcFlags = CMTimeCodeFormatDescriptionGetTimeCodeFlags(formatDesc)
+            let dropFrame = (tcFlags & kCMTimeCodeFlag_DropFrame) != 0
 
             // Try to read the first timecode sample
             let timecodeString = await readFirstTimecodeSample(
                 from: timecodeTrack,
                 formatDescription: formatDesc,
                 frameRate: frameRate,
+                frameQuanta: frameQuanta,
                 dropFrame: dropFrame
             )
 
@@ -653,6 +656,7 @@ public struct AVFoundationMediaProbe: MediaProbe, Sendable {
         from track: AVAssetTrack,
         formatDescription: CMFormatDescription,
         frameRate: Double,
+        frameQuanta: UInt32,
         dropFrame: Bool
     ) async -> String? {
         do {
@@ -714,6 +718,7 @@ public struct AVFoundationMediaProbe: MediaProbe, Sendable {
             return frameNumberToTimecode(
                 frameNumber: frameNumber,
                 frameRate: frameRate,
+                frameQuanta: frameQuanta,
                 dropFrame: dropFrame
             )
 
@@ -723,36 +728,51 @@ public struct AVFoundationMediaProbe: MediaProbe, Sendable {
         }
     }
 
-    /// Converts a frame number to a timecode string.
+    /// Converts an absolute frame number to a SMPTE timecode string.
     ///
-    /// - Note: This is a simplified conversion. Drop-frame calculation
-    ///   is not fully implemented in v1 (always treats as non-drop-frame).
-    private func frameNumberToTimecode(
+    /// Implements standard drop-frame renumbering for 29.97 (quanta 30) and
+    /// 59.94 (quanta 60) when `dropFrame` is set; otherwise produces
+    /// non-drop-frame timecode. Hours wrap at 24h per SMPTE convention.
+    ///
+    /// - Parameters:
+    ///   - frameNumber: Absolute frame index from the timecode sample.
+    ///   - frameRate: Real frame rate (e.g. 29.97), used only as a fallback base.
+    ///   - frameQuanta: Integer frames-per-second base for roll-over (e.g. 30).
+    ///   - dropFrame: Whether the track is drop-frame.
+    func frameNumberToTimecode(
         frameNumber: Int64,
         frameRate: Double,
+        frameQuanta: UInt32,
         dropFrame: Bool
     ) -> String {
-        // For v1, we use simple non-drop-frame calculation
-        // Full drop-frame support is planned for v2
-        let fps = Int(frameRate.rounded())
+        // Frames-per-second base for HH:MM:SS:FF roll-over. Prefer the quanta
+        // from the format description; fall back to the rounded real rate.
+        let fps = frameQuanta > 0 ? Int64(frameQuanta) : Int64(max(1, Int(frameRate.rounded())))
         guard fps > 0 else { return "00:00:00:00" }
 
-        var frames = frameNumber
-        if frames < 0 { frames = 0 }
-
-        let ff = Int(frames % Int64(fps))
-        frames /= Int64(fps)
-
-        let ss = Int(frames % 60)
-        frames /= 60
-
-        let mm = Int(frames % 60)
-        frames /= 60
-
-        let hh = Int(frames % 24)
-
-        // Use semicolon separator for drop-frame indication
+        var frames = max(0, frameNumber)
         let separator = dropFrame ? ";" : ":"
+
+        // Drop-frame renumbering applies only to 29.97 (30) and 59.94 (60):
+        // two (or four) frame labels are skipped each minute except every 10th.
+        if dropFrame && (fps == 30 || fps == 60) {
+            let dropPerMin = fps / 15                       // 30 -> 2, 60 -> 4
+            let framesPerMin = fps * 60 - dropPerMin        // 1798 for 30
+            let framesPer10Min = fps * 600 - dropPerMin * 9 // 17982 for 30
+            let tenMinBlocks = frames / framesPer10Min
+            let remainder = frames % framesPer10Min
+            if remainder > dropPerMin {
+                frames += dropPerMin * 9 * tenMinBlocks
+                    + dropPerMin * ((remainder - dropPerMin) / framesPerMin)
+            } else {
+                frames += dropPerMin * 9 * tenMinBlocks
+            }
+        }
+
+        let ff = Int(frames % fps)
+        let ss = Int((frames / fps) % 60)
+        let mm = Int((frames / (fps * 60)) % 60)
+        let hh = Int((frames / (fps * 3600)) % 24)
 
         return String(format: "%02d:%02d:%02d%@%02d", hh, mm, ss, separator, ff)
     }

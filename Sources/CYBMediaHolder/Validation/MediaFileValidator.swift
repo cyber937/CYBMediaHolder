@@ -73,6 +73,15 @@ public struct MediaValidationConfig: Sendable {
     /// Whether to validate file signatures (default: true).
     public var validateSignature: Bool
 
+    /// Whether to *reject* files whose magic-number signature does not match
+    /// their extension's media category (default: false).
+    ///
+    /// When false, a mismatch is detected but tolerated — the probe decides.
+    /// Enable deliberately for untrusted input, and confirm your existing
+    /// library does not surface false rejections first (a signature database
+    /// can produce false positives for unusual-but-valid files).
+    public var enforceSignatureMatching: Bool
+
     /// Whether to check path safety (default: true).
     public var checkPathSafety: Bool
 
@@ -96,11 +105,13 @@ public struct MediaValidationConfig: Sendable {
         maxFileSize: UInt64 = 100 * 1024 * 1024 * 1024,
         rejectSymlinks: Bool = true,
         validateSignature: Bool = true,
+        enforceSignatureMatching: Bool = false,
         checkPathSafety: Bool = true
     ) {
         self.maxFileSize = maxFileSize
         self.rejectSymlinks = rejectSymlinks
         self.validateSignature = validateSignature
+        self.enforceSignatureMatching = enforceSignatureMatching
         self.checkPathSafety = checkPathSafety
     }
 }
@@ -520,10 +531,16 @@ public struct MediaFileValidator: Sendable {
             return
         }
 
-        // Log mismatch but don't fail (handled downstream)
+        // A definite category mismatch (e.g. a ".mp4" whose bytes are PNG).
         if expectedCategory != actualCategory && expectedCategory != .unknown {
-            // In the future, could log this for debugging
-            // For now, allow the probe to handle format detection
+            // Reject only when explicitly opted in; otherwise tolerate the
+            // mismatch and let the probe perform real format detection.
+            if config.enforceSignatureMatching {
+                throw MediaValidationError.signatureMismatch(
+                    expected: "\(expectedCategory)",
+                    actual: "\(actualCategory)"
+                )
+            }
         }
     }
 

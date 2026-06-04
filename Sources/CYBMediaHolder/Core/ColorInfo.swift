@@ -142,7 +142,7 @@ public enum MatrixCoefficients: String, Codable, Sendable, CaseIterable {
             self = .bt709
         case "ITU_R_2020":
             self = .bt2020NCL
-        case "SMPTE_170M_2004":
+        case "ITU_R_601_4", "SMPTE_240M_1995":
             self = .bt601
         default:
             self = .unknown
@@ -233,22 +233,26 @@ extension ColorInfo {
     /// - Parameter formatDescription: The video format description.
     /// - Returns: ColorInfo with extracted color metadata.
     public init(from formatDescription: CMFormatDescription) {
-        let extensions = CMFormatDescriptionGetExtensions(formatDescription) as? [String: Any] ?? [:]
+        // Format-description extensions are a CFDictionary keyed by CFString.
+        // The color metadata must be read with the canonical
+        // `kCMFormatDescriptionExtension_*` keys (their values are CFStrings
+        // such as "ITU_R_709_2"), not arbitrary string literals.
+        let extensions = CMFormatDescriptionGetExtensions(formatDescription) as? [CFString: Any] ?? [:]
 
         // Extract color primaries
-        let primariesCF = extensions["CVColorPrimaries"] as? String
+        let primariesCF = extensions[kCMFormatDescriptionExtension_ColorPrimaries] as? String
         self.primaries = ColorPrimaries(from: primariesCF as CFString?)
 
         // Extract transfer function
-        let transferCF = extensions["CVTransferFunction"] as? String
+        let transferCF = extensions[kCMFormatDescriptionExtension_TransferFunction] as? String
         self.transferFunction = TransferFunction(from: transferCF as CFString?)
 
         // Extract matrix
-        let matrixCF = extensions["CVYCbCrMatrix"] as? String
+        let matrixCF = extensions[kCMFormatDescriptionExtension_YCbCrMatrix] as? String
         self.matrix = MatrixCoefficients(from: matrixCF as CFString?)
 
         // Extract full range flag
-        if let fullRange = extensions["CVFullRangeVideo"] as? Bool {
+        if let fullRange = extensions[kCMFormatDescriptionExtension_FullRangeVideo] as? Bool {
             self.isFullRange = fullRange
         } else {
             self.isFullRange = nil

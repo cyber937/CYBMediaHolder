@@ -115,6 +115,20 @@ Detailed documentation is available in the [doc/](doc/) folder:
 - [Services](doc/SERVICES.md) - Probe system and analyzers
 - [Timecode](doc/TIMECODE.md) - Timecode extraction and availability
 - [Core Normalized](doc/CORE_NORMALIZED.md) - Vendor-independent metadata layer
+- [Upgrading to v1.0.0](doc/UPGRADING.md) - Migration notes and behavioral changes when adopting v1.0.0
+
+## Upgrading to v1.0.0
+
+> ⚠️ 新しいバージョン（**v1.0.0**）を使用する場合は、これらのことに注意して使用してください。
+>
+> When adopting **v1.0.0**, review the notes below. The public API stays source-compatible, but some media facts change value and identity/cache behavior changes — treat it as **re-verify + one-time migration**, not a rewrite.
+
+- **Re-verify (no code change):** color/HDR, timecode (rate / drop-frame / start), display aspect ratio, VFR, and capability flags now return corrected values.
+- **Identity migration:** if you persist `MediaID`, migrate old → new IDs or re-index. `MediaID` becomes content-stable and its equality semantics change.
+- **Cache cold start:** the L2 disk cache regenerates once after upgrade (accept the first-run cost).
+- **Opt-in validation:** signature enforcement is opt-in via `MediaValidationConfig`; enable it deliberately and check for false positives in your existing library.
+
+See **[Upgrading to v1.0.0](doc/UPGRADING.md)** for the full guide.
 
 ## Philosophy
 
