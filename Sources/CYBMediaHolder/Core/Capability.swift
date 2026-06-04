@@ -290,6 +290,8 @@ public enum CapabilityCalculator {
             if state.keyframeIndex != nil {
                 caps.insert(.keyframeIndexAvailable)
                 caps.insert(.frameAccurateSeeking)
+                // The index already exists, so it is no longer "generatable".
+                caps.remove(.keyframeIndexGeneratable)
             }
             if state.thumbnailIndex != nil {
                 caps.insert(.thumbnailIndexAvailable)

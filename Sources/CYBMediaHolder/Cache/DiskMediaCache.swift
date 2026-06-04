@@ -92,7 +92,11 @@ public actor DiskMediaCache: MediaCache {
         let variant: String?
 
         init(from key: MediaCacheKey) {
-            self.mediaIDHash = key.mediaID.hashValue.description
+            // Use the stable UUID string, NOT `hashValue` — `Hashable` is seeded
+            // with a per-process random value, so `hashValue` changes on every
+            // launch and would make every persisted entry unreachable after a
+            // restart (and could collide distinct IDs onto one filename).
+            self.mediaIDHash = key.mediaID.uuid.uuidString
             self.dataType = key.dataType.rawValue
             self.variant = key.variant
         }
@@ -318,8 +322,10 @@ public actor DiskMediaCache: MediaCache {
     }
 
     public func removeAll(for mediaID: MediaID) async {
-        let hashPrefix = mediaID.hashValue.description
-        let keysToRemove = metadataIndex.keys.filter { $0.hasPrefix(hashPrefix) }
+        // Filenames are "<uuid>_<dataType>[_<variant>].cache"; match on the
+        // stable UUID plus the "_" delimiter so we don't over-match other IDs.
+        let keyPrefix = mediaID.uuid.uuidString + "_"
+        let keysToRemove = metadataIndex.keys.filter { $0.hasPrefix(keyPrefix) }
 
         for filename in keysToRemove {
             if let metadata = metadataIndex[filename] {

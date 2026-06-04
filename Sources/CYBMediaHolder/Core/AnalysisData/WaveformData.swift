@@ -60,6 +60,13 @@ public struct WaveformData: Codable, Sendable {
         maxSamples: [Float],
         channelCount: Int
     ) {
+        // `count` and `subscript` assume the two arrays are parallel; enforce it
+        // up front so a mismatch fails loudly at construction rather than as an
+        // out-of-bounds trap during rendering.
+        precondition(
+            minSamples.count == maxSamples.count,
+            "WaveformData requires minSamples and maxSamples to have equal counts (\(minSamples.count) != \(maxSamples.count))"
+        )
         self.samplesPerSecond = samplesPerSecond
         self.minSamples = minSamples
         self.maxSamples = maxSamples
